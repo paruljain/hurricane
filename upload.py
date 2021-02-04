@@ -1,11 +1,10 @@
 import http.client
 import os
-from aws_request_signer import AwsRequestSigner, UNSIGNED_PAYLOAD
+from aws_request_signer import AwsRequestSigner as __AwsRequestSigner, UNSIGNED_PAYLOAD as __UNSIGNED_PAYLOAD
 from urllib.parse import quote
-from fileReader import FileReader
+from fileReader import FileReader as __FileReader
 from threading import Thread
 
-__shutdown = False
 awsRegion = None
 awsAccessKey = None
 awsSecretKey = None
@@ -16,20 +15,24 @@ blockSize = 1048576
 fileQ = None
 errorReportQ = None
 
-def shutdown():
-    global __shutdown
-    __shutdown = True
-
 class __Uploader:
-    def __init__(self):
+    def __init__(self, awsRegion, awsAccessKey, awsSecretKey, awsHost, awsPort, awsBucket, blockSize):
         self.filesUploaded = 0
         self.bytesUploaded = 0
-        self.requestSigner = AwsRequestSigner(awsRegion, awsAccessKey, awsSecretKey, 's3')
+        #self.awsRegion = awsRegion
+        #self.awsAccessKey = awsAccessKey
+        #self.awsSecretKey = awsSecretKey
+        #self.awsHost = awsHost
+        #self.awsPort = awsPort
+        self.blockSize = blockSize
+        self.awsBucket = awsBucket
+        self.requestSigner = __AwsRequestSigner(awsRegion, awsAccessKey, awsSecretKey, 's3')
         self.conn = http.client.HTTPConnection(host=awsHost, port=awsPort, blocksize=blockSize)
+        self.shutdown = False
 
     def upload(self):
         while True:
-            if __shutdown:
+            if self.shutdown:
                 break
             try:
                 f = fileQ.get(True, 5)
@@ -62,10 +65,10 @@ class __Uploader:
             headers = {"Content-Type": "application/octet-stream", "Content-Length": str(fileSize)}
 
             # Add the AWS authentication header
-            headers.update(self.requestSigner.sign_with_headers("PUT", URL, headers, content_hash=UNSIGNED_PAYLOAD))
+            headers.update(self.requestSigner.sign_with_headers("PUT", URL, headers, content_hash=__UNSIGNED_PAYLOAD))
 
             try:
-                fr = FileReader(f, blockSize)
+                fr = __FileReader(f, blockSize)
             except Exception:
                 errorReportQ.put({
                     'filePath': f,
@@ -121,3 +124,7 @@ def run(numThreads=1):
         instance = __Uploader()
         __instances.append(instance)
         instance.run()
+
+def shutdown():
+    global __shutdown
+    __shutdown = True
