@@ -5,7 +5,7 @@ from urllib.parse import quote
 from fileReader import FileReader as FileReader
 from threading import Thread
 
-class __Uploader:
+class Uploader:
     def __init__(self, awsRegion, awsAccessKey, awsSecretKey, awsHost, awsPort, awsBucket, fileQ, errorReportQ, blockSize):
         self.filesUploaded = 0
         self.bytesUploaded = 0
@@ -28,8 +28,6 @@ class __Uploader:
                 f = self.fileQ.get(True, 5)
             except Exception:
                 # Exit as there are no more files in the queue to upload
-                self.conn.close()
-                self.done = True
                 break
             
             if os.name == 'nt':
@@ -82,9 +80,6 @@ class __Uploader:
                     'result': 'failed',
                     'error': str(err)
                 })
-                self.conn.close()
-                fr.close()
-                self.done = True
                 break
 
             if res.status < 200 or res.status > 299:
@@ -95,23 +90,26 @@ class __Uploader:
                     'result': 'failed',
                     'error': 'Status code: ' + str(res.status) + ' Body: ' + str(respBody)
                 })
-                self.conn.close()
-                fr.close()
-                self.done = True
                 break
             
             self.filesUploaded += 1
+
+        # Outside While
+        if fr:
+            fr.close()
+        self.conn.close()
+        self.done = True
 
     def run(self):
         self.thread = Thread(target=self.upload)
         self.thread.start()
 
-__instances = []
+instances = []
 def run(awsRegion, awsAccessKey, awsSecretKey, awsHost, awsPort, awsBucket, fileQ, errorReportQ, blockSize=1048576, numThreads=1):
-    global __instances
+    global instances
     
     for _ in range(numThreads):
-        instance = __Uploader(
+        instance = Uploader(
                         awsRegion = awsRegion,
                         awsAccessKey = awsAccessKey,
                         awsSecretKey = awsSecretKey,
@@ -122,21 +120,21 @@ def run(awsRegion, awsAccessKey, awsSecretKey, awsHost, awsPort, awsBucket, file
                         fileQ = fileQ,
                         errorReportQ = errorReportQ
             )
-        __instances.append(instance)
+        instances.append(instance)
         instance.run()
 
 def isDone():
-    for instance in __instances:
+    for instance in instances:
         if not instance.done:
             return False
     return True
 
 def filesUploaded():
     uploaded = 0
-    for instance in __instances:
+    for instance in instances:
         uploaded += instance.filesUploaded
     return uploaded
 
 def shutdown():
-    for instance in __instances:
+    for instance in instances:
         instance.shutdown = True
