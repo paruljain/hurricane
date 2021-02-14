@@ -1,28 +1,54 @@
 import scanner
-import upload
+from fileReader import FileReader
+from s3FileUpload import S3FileUpload
 from queue import Queue
 import time
+import os
+import threading
 
-fileQ = Queue()
+fileQ = Queue(10000)
 errorReportQ = Queue()
 
-scanner.run('c:\\python', fileQ, errorReportQ)
+scanner.Scanner('c:\\python', fileQ, errorReportQ).start()
 
-upload.run(
-    awsRegion = 'us-east-1',
-    awsAccessKey = 'RNLJDN0K03B7HHZPZTK3',
-    awsSecretKey = 'joayaC6Gw5JfzHDoYTFWcQH0xJT94Bpb5Eroood2',
-    awsHost = '192.168.68.113',
-    awsPort = 9000,
-    awsBucket = 'test',
-    fileQ = fileQ,
-    errorReportQ = errorReportQ,
-    numThreads=100
-)
+def upload():
+    fr = FileReader(fileQ, errorReportQ, 1024 * 1024 * 10)
+    fr.run()
+    s3 = S3FileUpload(
+            'us-east-1',
+            'RNLJDN0K03B7HHZPZTK3',
+            'joayaC6Gw5JfzHDoYTFWcQH0xJT94Bpb5Eroood2',
+            'http://192.168.68.113:9000',
+            'test'
+        )
 
-while not upload.isDone():
-    print(scanner.getScannedCount(), 'files scanned;', upload.filesUploaded(), 'files uploaded')
-    time.sleep(2)
+    while True:
+        chunk = fr.chunkQ.get()
+        if not chunk:
+            break
+        [data, filePath, fileSize] = chunk
+        # print(filePath)
+        key = filePath
+        if os.name == 'nt':
+            key = '/' + filePath.replace('\\', '/').replace(':', '')
+        s3.startFileSend(key, fileSize)
+        s3.sendFileData(data)
+        while True:
+            if not data:
+                s3.endFileSend()
+                break
 
-for _ in range(errorReportQ.qsize()):
-    print(errorReportQ.get())
+            [data, filePath, fileSize] = fr.chunkQ.get()
+            s3.sendFileData(data)
+
+startTime = time.time()
+threads = []
+for _ in range(10):
+    t = threading.Thread(target=upload)
+    threads.append(t)
+    t.start()
+
+for t in threads:
+    t.join()
+
+print('All done in', round(time.time() - startTime), 'seconds')

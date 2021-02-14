@@ -1,32 +1,37 @@
-from threading import Thread
-from queue import Queue
+import threading
+import queue
+import stat
+import os
 
 class FileReader:
-    def __init__(self, filePath, blocksize=1048576):
-        self.fd = open(filePath, 'rb')
-        self.blocksize = blocksize
-        self.chunkQ = Queue(2)
-        self.bytesSent = 0
+    def __init__(self, fileQ, errorReportQ, blockSize=1048576):
+        self.blockSize = blockSize
+        self.chunkQ = queue.Queue(2)
+        self.fileQ = fileQ
+        self.errorReportQ = errorReportQ
+        self.shutdown = threading.Event()
 
     def run(self):
-        self.runWorker = True
-        Thread(target=self.getFileChunk).start()
+        threading.Thread(target=self.readFileChunks, daemon=True).start()
 
-    def getFileChunk(self):
-        while self.runWorker:
-            chunk = self.fd.read(self.blocksize)
+    def readFileChunks(self):
+        fd = None
+        while not self.shutdown.isSet():
+            if not fd:
+                try:
+                    filePath = self.fileQ.get(True, 1)
+                except queue.Empty:
+                    break
+                stats = os.stat(filePath)
+                fd = open(filePath, 'rb')
+
+            chunk = fd.read(self.blockSize)
+            self.chunkQ.put((chunk, filePath, stats.st_size))
+
             if not chunk:
-                self.fd.close()
-                self.chunkQ.put('')
-                break
-            self.chunkQ.put(chunk)
-
-    def read(self, _):
-        data = self.chunkQ.get()
-        self.chunkQ.task_done()
-        self.bytesSent += len(data)
-        return data
-
-    def close(self):
-        self.runWorker = False
-        self.fd.close()
+                fd.close()
+                fd = None
+        
+        if fd:
+            fd.close()
+        self.chunkQ.put(None)
